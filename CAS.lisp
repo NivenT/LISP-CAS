@@ -22,7 +22,7 @@
 	"Returns whether or not x is a variable (symbol of form ?x)"
 	(and (symbolp x) (equal (char (symbol-name x) 0) #\?)))
 (defun num-variablep (x)
-	"Returns whether or not x is a number variable (?numx represents any number)"
+	"Returns whether or not x is a number variable (?num represents any number)"
 	(and (variablep x) (>= (length (symbol-name x)) 4) (equal (subseq (symbol-name x) 0 4) "?NUM")))
 (defun const-variablep (x)
 	"Returns whether or not x is a constant variable (?!x represents any expression not containing ?x)"
@@ -30,15 +30,24 @@
 (defun update-variablep (x)
 	"Returns whether or not x is an update variable ((?u f) means replace f with its simplified value, given the bindings found thus far)"
 	(and (consp x) (= (length x) 2) (eq (car x) '?u)))
+(defun function-variablep (x)
+	"Returns whether or not x is a function variable (?fx represents any expression containing ?x)"
+	(and (variablep x) (>= (length (symbol-name x)) 3) (equal (char (symbol-name x) 1) #\F)))
 (defun var-complement (x)
 	"Returns the constant variable that cannot contain x (?x -> ?!x)"
 	(read-from-string (concatenate 'string "?!" (subseq (symbol-name x) 1))))
 (defun const-var-complement (x)
 	"Returns the variable that x can not be associated with (?!x -> ?x)"
 	(read-from-string (concatenate 'string "?" (subseq (symbol-name x) 2))))
+(defun func-arg (x)
+	"Returns the argument of the function variable x (?fx -> ?x)"
+	(read-from-string (concatenate 'string "?" (subseq (symbol-name x) 2))))
+(defun var-func (x)
+	"Returns the function variable associated with x (?x -> ?fx)"
+	(read-from-string (concatenate 'string "?f" (subseq (symbol-name x) 1))))
 (defun commutativep (op)
 	"Returns whether or not an operation is commutative"
-	(member op '(+ *)))
+	(member op '(+ * =)))
 (defun unaryp (op)
 	"Returns whether or not an operation is unary"
 	(or	(member op '(sin cos tan sinh cosh tanh ln sqrt))
@@ -64,6 +73,8 @@
 	"Returns the associated value of the variable or (T . T) if it would be associated with two values"
 	(cond 	((assoc variable bindings) (if (eq-expr (cdr (assoc variable bindings)) input) (assoc variable bindings) '(t . t)))
 			((r-find input (cdr (assoc (var-complement variable) bindings))) '(t . t))
+			((not (assoc (var-func variable) bindings)) (cons variable input))
+			((not (r-find input (cdr (assoc (var-func variable) bindings)))) '(t . t))
 			(t (cons variable input))))
 (defun num-var-match (variable input bindings)
 	"Returns the associated value of the number variable or (T . T) if input is invalid"
@@ -79,13 +90,20 @@
 (defun update-var (variable bindings)
 	"Returns the updated representation of variable"
 	(simplify (sublis bindings (cadr variable))))
+(defun function-var-match (variable input bindings)
+	"Returns the associated value of the constant variable or (T . T) if input is invalid"
+	(cond 	((assoc variable bindings) (if (eq-expr (cdr (assoc variable bindings)) input) (assoc variable bindings) '(t . t)))
+			((not (assoc (func-arg variable) bindings)) (cons variable input))
+			((r-find (cdr (assoc (func-arg variable) bindings)) input) (cons variable input))
+			(t '(t . t))))
 (defun pat-match (pattern input &optional (bindings nil))
 	"Returns an association list of variable bindings"
 	(cond	((not (consp pattern)) bindings)
 			((not (consp input))	'((t . t)))
-			((num-variablep (car pattern)) (pat-match (cdr pattern) (cdr input) (union bindings (list (num-var-match (car pattern) (car input) bindings)))))
-			((const-variablep (car pattern)) (pat-match (cdr pattern) (cdr input) (union bindings (list (const-var-match (car pattern) (car input) bindings)))))
+			((num-variablep (car pattern)) (pat-match (cdr pattern) (cdr input) (union bindings `(,(num-var-match (car pattern) (car input) bindings)))))
+			((const-variablep (car pattern)) (pat-match (cdr pattern) (cdr input) (union bindings `(,(const-var-match (car pattern) (car input) bindings)))))
 			((update-variablep (car pattern)) (pat-match (cons (update-var (car pattern) bindings) (cdr pattern)) input bindings))
+			((function-variablep (car pattern)) (pat-match (cdr pattern) (cdr input) (union bindings `(,(function-var-match (car pattern) (car input) bindings)))))
 			((variablep (car pattern)) (pat-match (cdr pattern) (cdr input) (union bindings (list (variable-match (car pattern) (car input) bindings)))))
 			((and (consp (car pattern)) (consp (car input))) (pat-match (cdr pattern) (cdr input) (pat-match (car pattern) (car input) bindings)))
 			(t (if (eq-expr (car pattern) (car input) nil) (pat-match (cdr pattern) (cdr input) bindings) (union bindings '((t . t)))))))
@@ -220,9 +238,32 @@
 	"Finds an extremum point of expression"
 	(let ((x (find-zero (simplify `((d ,var) ,expression)) :accuracy accuracy :guess guess :var var)))
 		(list x (evaluate expression `((,var . ,x))))))
-			
+(defparameter *isolation-rules*	'(	( (?!x0 = ?fx) -> (?fx = ?!x0))
+									( ((?x + ?!x0) = ?!x1) -> (?x = (?!x1 - ?!x0)) )
+									( ((?x - ?!x0) = ?!x1) -> (?x = (?!x1 + ?!x0)) )
+									( ((?x * ?!x0) = ?!x1) -> (?x = (?!x1 / ?!x0)) )
+									( ((?x / ?!x0) = ?!x1) -> (?x = (?!x1 * ?!x0)) )
+								 ) "A list of rules for isolating a variable")
+(defun clone-variable (var val &optional (n 10))
+	"Creates n dummy variables that all have the same binding as val"
+	(case n	(0 `((,var . ,val)))
+			(otherwise (union `((,(read-from-string (concatenate 'string (symbol-name var) (write-to-string (1- n)))) . ,val)) (clone-variable var val (1- n))))))
+(defun solve (equation &key (var 'x) (rules *isolation-rules*))
+	"Solves simple equations"
+	(when (consp equation)
+		(loop for rule in rules do
+			(let ((bindings (pat-match (car rule) equation (clone-variable '?x var))))
+				(when (consistent-bindingsp bindings)
+					(return-from solve (solve (sublis bindings (caddr rule)) :var var :rules rules))))))
+	(evaluate equation))
+(defun nsolve (equation &key (accuracy .0000001) (guess 1) (var 'x))
+	"Numerically solves an equation"
+	(find-zero `(,(car equation) - ,(caddr equation)) :accuracy accuracy :guess guess :var var))
+	
 ;examples
 ;;integrating 2x*sin(x^2) dx: (simplify '((i x) ((sin (x ^ 2)) * (2 * x))))
 ;;integrating sin(ln(x))/x+sin(x)*cos(x) dx: (simplify '((i x) (((sin (ln x)) * (1 / x)) + ((sin x) * (cos x)))))
 ;;the derivative of x^x with respect to x: (simplify '((d x) (x ^ x)))
 ;;((5 * x)/(x + 9) - a) when x=4 and a=11: (evaluate '(((5 * x) / (x + 9)) - a) '((x . 4) (a . 11)))
+;;solving 12=x/3: (solve '(12 = (x / 3)))
+;;solving lnx=sinx: (nsolve '((ln x) = (sin x)))
