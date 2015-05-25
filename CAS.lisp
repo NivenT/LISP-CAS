@@ -111,12 +111,10 @@
 					((matches '(i ?x) f) f)
 					((matches '(d ?x) (car f)) f)
 					((matches '(i ?x) (car f)) f)
-					((and (unaryp (car f)) (numberp (cadr f))) (eval (infix->prefix f)))
 					((and (unaryp (car f)) (numberp (evaluate (cadr f)))) (eval (list (car f) (evaluate (cadr f)))))
 					((unaryp (car f)) (list (car f) (evaluate (cadr f))))
-					((and (eq (car f) '-) (null (second-operand f))) (if (numberp (cadr f)) (eval f) (list (car f) (evaluate (cadr f)))))
-					((eq (car f) 'log) (eval (infix->prefix f)))
-					((and (numberp (first-operand f)) (numberp (second-operand f))) (eval (infix->prefix f)))
+					((and (eq (car f) '-) (null (second-operand f))) (if (numberp (evaluate (cadr f))) (eval (list (car f) (evaluate (cadr f)))) (list (car f) (evaluate (cadr f)))))
+					((and (eq (car f) 'log) (numberp (evaluate (cadr f))) (numberp (evaluate (caddr f)))) (eval (infix->prefix f)))
 					((and (numberp (evaluate (first-operand f))) (numberp (evaluate (second-operand f))))
 						(eval (infix->prefix (list (evaluate (first-operand f)) (get-op f) (evaluate (second-operand f))))))
 					(t (list (evaluate (first-operand f)) (get-op f) (evaluate (second-operand f)))))
@@ -152,6 +150,8 @@
 										((log E ?x) = (ln ?x))
 										((log ?b ?b) = 1)
 										((log ?b (?x ^ ?n)) = (?n * (log ?b ?x)))
+										((sin PI) = 0)
+										((sin (?num0 * PI)) = 0)
 									  ) "A list of rules for simplifying expressions")
 (defparameter *derivation-rules*     '(	(((d ?x) ?!x) = 0)
 										(((d ?x) ?x) = 1)
@@ -210,6 +210,16 @@
 			(let ((g (loop for term in f collect (simplify term rules))))
 				(if (equalp prev-expr g) g (simplify g rules g)))
 			f)))
+(defun find-zero (expression &key (accuracy .0000001) (guess 1) (var 'x))
+	"Finds a zero of expression"
+	(if (<= (abs (evaluate expression (list (cons var guess)))) accuracy)
+		guess
+		(find-zero expression :accuracy accuracy :var var :guess (- guess 
+			(/ (evaluate expression (list (cons var guess))) (evaluate (simplify `((d ,var) ,expression)) `((,var . ,guess))))))))
+(defun find-extremum (expression &key (accuracy .0000001) (guess 1) (var 'x))
+	"Finds an extremum point of expression"
+	(let ((x (find-zero (simplify `((d ,var) ,expression)) :accuracy accuracy :guess guess :var var)))
+		(list x (evaluate expression `((,var . ,x))))))
 			
 ;examples
 ;;integrating 2x*sin(x^2) dx: (simplify '((i x) ((sin (x ^ 2)) * (2 * x))))
