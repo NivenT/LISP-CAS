@@ -12,6 +12,11 @@
 (defun ln (x)
 	"Natural log"
 	(log x))
+(defun myunion (&rest lists)
+	"Set union of arbitrarily many lists"
+	(case (length lists)	((0 1) (car lists))
+							(2 (apply #'union lists))
+							(otherwise (union (car lists) (apply #'myunion (cdr lists))))))
 (defun variablep (x)
 	"Returns whether or not x is a variable (symbol of form ?x)"
 	(and (symbolp x) (equal (char (symbol-name x) 0) #\?)))
@@ -21,6 +26,9 @@
 (defun const-variablep (x)
 	"Returns whether or not x is a constant variable (?!x represents any expression not containing ?x)"
 	(and (variablep x) (equal (char (symbol-name x) 1) #\!)))
+(defun update-variablep (x)
+	"Returns whether or not x is an update variable ((?u f) means replace f with its simplified value, given the bindings found thus far)"
+	(and (consp x) (= (length x) 2) (eq (car x) '?u)))
 (defun var-complement (x)
 	"Returns the constant variable that cannot contain x (?x -> ?!x)"
 	(read-from-string (concatenate 'string "?!" (subseq (symbol-name x) 1))))
@@ -33,7 +41,7 @@
 (defun unaryp (op)
 	"Returns whether or not an operation is unary"
 	(or	(member op '(sin cos tan sinh cosh tanh ln sqrt))
-		(and (consp op) (matches '(d ?x) op))))
+		(and (consp op) (or (matches '(d ?x) op) (matches '(i ?x) op)))))
 (defun get-op (expr)
 	"Returns the operation in an expression"
 	(cadr expr))
@@ -43,13 +51,14 @@
 (defun second-operand (expr)
 	"Returns the 2nd operand of an expression"
 	(caddr expr))
-(defun eq-expr (f g)
+(defun eq-expr (f g &optional (simp? t))
 	"Returns whether f or g represent the same expression"
-	(let ((a (simplify f)) (b (simplify g)))
+	(when (equalp f g) (return-from eq-expr t))
+	(let ((a (if simp? (simplify f) f)) (b (if simp? (simplify g) g)))
 		(or	(equalp a b)
 			(and 	(consp a) (consp b) (eq (get-op a) (get-op b)) 
-					(or (and (eq-expr (first-operand a) (first-operand b)) (eq-expr (second-operand a) (second-operand b)))
-						(and (commutativep (get-op a)) (eq-expr (first-operand a) (second-operand b)) (eq-expr (second-operand a) (first-operand b))))))))
+					(or (and (eq-expr (first-operand a) (first-operand b) simp?) (eq-expr (second-operand a) (second-operand b) simp?))
+						(and (commutativep (get-op a)) (eq-expr (first-operand a) (second-operand b) simp?) (eq-expr (second-operand a) (first-operand b) simp?)))))))
 (defun variable-match (variable input bindings)
 	"Returns the associated value of the variable or (T . T) if it would be associated with two values"
 	(cond 	((assoc variable bindings) (if (eq-expr (cdr (assoc variable bindings)) input) (assoc variable bindings) '(t . t)))
@@ -66,15 +75,19 @@
 	(cond 	((assoc variable bindings) (if (eq-expr (cdr (assoc variable bindings)) input) (assoc variable bindings) '(t . t)))
 			((not (r-find (cdr (assoc (const-var-complement variable) bindings)) input)) (cons variable input))
 			(t '(t . t))))
+(defun update-var (variable bindings)
+	"Returns the updated representation of variable"
+	(simplify (sublis bindings (cadr variable))))
 (defun pat-match (pattern input &optional (bindings nil))
 	"Returns an association list of variable bindings"
-	(cond	((null pattern) bindings)
-			((null input)	'((t . t)))
+	(cond	((not (consp pattern)) bindings)
+			((not (consp input))	'((t . t)))
 			((num-variablep (car pattern)) (pat-match (cdr pattern) (cdr input) (union bindings (list (num-var-match (car pattern) (car input) bindings)))))
 			((const-variablep (car pattern)) (pat-match (cdr pattern) (cdr input) (union bindings (list (const-var-match (car pattern) (car input) bindings)))))
+			((update-variablep (car pattern)) (pat-match (replace pattern `(,(update-var (car pattern) bindings))) input bindings))
 			((variablep (car pattern)) (pat-match (cdr pattern) (cdr input) (union bindings (list (variable-match (car pattern) (car input) bindings)))))
 			((and (consp (car pattern)) (consp (car input))) (pat-match (cdr pattern) (cdr input) (pat-match (car pattern) (car input) bindings)))
-			(t (if (eq (car pattern) (car input)) (pat-match (cdr pattern) (cdr input) bindings) '((t . t))))))
+			(t (if (eq-expr (car pattern) (car input) nil) (pat-match (cdr pattern) (cdr input) bindings) (union bindings '((t . t)))))))
 (defun consistent-bindingsp (bindings)
 	"Returns whether or not a list of bindings is valid (does not contain (T . T))"
 	(not (member '(t . t) bindings :test #'equalp)))
@@ -83,20 +96,25 @@
 	(consistent-bindingsp (pat-match pattern input)))
 (defun infix->prefix (expression)
 	"Converts an infix expression to prefix"
-	(cond 	((not (consp expression)) expression)
-			((unaryp (get-op expression)) expression)
+	(cond 	((not (consp expression)) 			expression)
+			((unaryp (get-op expression)) 		expression)
 			((null (second-operand expression)) expression)
-			((eq (get-op expression) '^)	(list 'expt (infix->prefix (first-operand expression)) (infix->prefix (second-operand expression))))
-			(t (list (get-op expression) (infix->prefix (first-operand expression)) (infix->prefix (second-operand expression))))))
+			((eq (get-op expression) '^)		(list 'expt (infix->prefix (first-operand expression)) (infix->prefix (second-operand expression))))
+			((eq (car expression) 'log)			(list 'log (infix->prefix (caddr expression)) (infix->prefix (cadr expression))))
+			(t (list (get-op expression) 		(infix->prefix (first-operand expression)) (infix->prefix (second-operand expression))))))
 (defun evaluate (expression &optional (bindings nil))
 	"Evaluates all numeric computations in an expression"
 	(let ((f (sublis bindings expression)))
 		(if (consp f)
 			(cond	((matches '(d ?x) f) f)
+					((matches '(i ?x) f) f)
+					((matches '(d ?x) (car f)) f)
+					((matches '(i ?x) (car f)) f)
 					((and (unaryp (car f)) (numberp (cadr f))) (eval (infix->prefix f)))
 					((and (unaryp (car f)) (numberp (evaluate (cadr f)))) (eval (list (car f) (evaluate (cadr f)))))
 					((unaryp (car f)) (list (car f) (evaluate (cadr f))))
 					((and (eq (car f) '-) (null (second-operand f))) (if (numberp (cadr f)) (eval f) (list (car f) (evaluate (cadr f)))))
+					((eq (car f) 'log) (eval (infix->prefix f)))
 					((and (numberp (first-operand f)) (numberp (second-operand f))) (eval (infix->prefix f)))
 					((and (numberp (evaluate (first-operand f))) (numberp (evaluate (second-operand f))))
 						(eval (infix->prefix (list (evaluate (first-operand f)) (get-op f) (evaluate (second-operand f))))))
@@ -141,10 +159,25 @@
 										(((d ?x) (ln ?f)) = (((d ?x) ?f) / ?f))
 										(((d ?x) (?f + ?g)) = (((d ?x) ?f) + ((d ?x) ?g)))
 										(((d ?x) (?f - ?g)) = (((d ?x) ?f) - ((d ?x) ?g)))
+										(((d ?x) (- ?f)) = (- ((d ?x) ?f)))
 										(((d ?x) (?f * ?g)) = ((((d ?x) ?f) * ?g) + (?f * ((d ?x) ?g))))
 										(((d ?x) (?f / ?g)) = (((((d ?x) ?f) * ?g) - (?f * ((d ?x) ?g))) / (?g ^ 2)))
 										(((d ?x) ?f) = ((d ?x) (E ^ (ln ?f)))) ;;If all else fails...
 									  ) "A list of rules for taking derivatives of expressions")
+(defparameter *integration-rules*	 '(	(((i ?x) ?!x) = (?x * ?!x))
+										(((i ?x) ?x) = ((?x ^ 2) / 2))
+										(((i ?x) (?x ^ ?num0)) = ((?x ^ (?num0 + 1)) / (?num0 + 1)))
+										(((i ?x) (sin ?x)) = (- (cos ?x)))
+										(((i ?x) (cos ?x)) = (sin ?x))
+										(((i ?x) ((?f ^ ?num0) * (?u ((d ?x) ?f)))) = ((?f ^ (?num0 + 1)) / (?num0 + 1)))
+										(((i ?x) ((sin ?f) * (?u ((d ?x) ?f)))) = (- (cos ?f)))
+										(((i ?x) ((cos ?f) * (?u ((d ?x) ?f)))) = (sin ?f))
+										(((i ?x) (?!x * ?f)) = (?!x * ((i ?x) ?f)))
+										(((i ?x) (?f * ?!x)) = (?!x * ((i ?x) ?f)))
+										(((i ?x) (?f + ?g)) = (((i ?x) ?f) + ((i ?x) ?g)))
+										(((i ?x) (?f - ?g)) = (((i ?x) ?f) - ((i ?x) ?g)))
+										(((i ?x) (- ?f)) = (- ((i ?x) ?f)))
+									  ) "A list of rules for integrating expressions")
 (defun simplify-helper (expr rules)
 	"Simplifies an expression, treating it as one unit"
 	(let ((f (evaluate expr)))
@@ -154,7 +187,7 @@
 					(when (consistent-bindingsp bindings)
 						(return-from simplify-helper (sublis bindings (caddr rule) :test #'eq-expr))))))
 		f))
-(defun simplify (expression &optional (rules (union *simplification-rules* *derivation-rules*)) (prev-expr nil))
+(defun simplify (expression &optional (rules (myunion *simplification-rules* *integration-rules* *derivation-rules*)) (prev-expr nil))
 	"Simplifies an expression"
 	(let ((f (evaluate (simplify-helper expression rules))))
 		(if (consp f)
