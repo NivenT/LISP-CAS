@@ -189,6 +189,8 @@
 										(((d ?x) (?num0 ^ ?f)) = (((d ?x) ?f) * ((?num0 ^ ?f) * (ln ?num0))))
 										(((d ?x) (log ?num0 ?f) = (((d ?x) ?f) / (?f * (ln ?num0)))))
 										(((d ?x) (ln ?f)) = (((d ?x) ?f) / ?f))
+										(((d ?x) (sinh ?f)) = (((d ?x) ?f) * (cosh ?f)))
+										(((d ?x) (cosh ?f)) = (((d ?x) ?f) * (sinh ?f)))
 										(((d ?x) (?f + ?g)) = (((d ?x) ?f) + ((d ?x) ?g)))
 										(((d ?x) (?f - ?g)) = (((d ?x) ?f) - ((d ?x) ?g)))
 										(((d ?x) (- ?f)) = (- ((d ?x) ?f)))
@@ -205,6 +207,8 @@
 										(((i ?x) (cos ?x)) = (sin ?x))
 										(((i ?x) (log ?num0 ?x)) = (((?x * (ln ?x)) - ?x) / (ln ?num0)))
 										(((i ?x) (ln ?x)) = ((?x * (ln ?x)) - ?x))
+										(((i ?x) (sinh ?x)) = (cosh ?x))
+										(((i ?x) (cosh ?x)) = (sinh ?x))
 										;u substitution
 										(((i ?x) (?f * (?u ((d ?x) ?f)))) = ((?f ^ 2) / 2))
 										(((i ?x) ((1 / ?f) * (?u ((d ?x) ?f)))) = (ln ?f))
@@ -214,6 +218,8 @@
 										(((i ?x) ((cos ?f) * (?u ((d ?x) ?f)))) = (sin ?f))
 										(((i ?x) ((log ?num0 ?f) * (?u ((d ?x) ?f)))) = (((?f * (ln ?f)) - ?f) / (ln ?num0)))
 										(((i ?x) ((ln ?f) * (?u ((d ?x) ?f)))) = ((?f * (ln ?f)) - ?f))
+										(((i ?x) ((sinh ?f) * (?u ((d ?x) ?f)))) = (cosh ?f))
+										(((i ?x) ((cosh ?f) * (?u ((d ?x) ?f)))) = (sinh ?f))
 										;integration rules
 										(((i ?x) (?!x * ?f)) = (?!x * ((i ?x) ?f)))
 										(((i ?x) (?f * ?!x)) = (?!x * ((i ?x) ?f)))
@@ -275,9 +281,11 @@
 									( ((?!x0 * ?fx0) = ?!x1) -> (?fx0 = (?!x1 / ?!x0)) )
 									( ((?fx0 / ?!x0) = ?!x1) -> (?fx0 = (?!x1 * ?!x0)) )
 									( ((?!x0 / ?fx0) = ?!x1) -> (?fx0 = (?!x0 / ?!x1)) )
+									( ((?fx0 ^ ?!x0) = ?!x1) -> (?fx0 = (?!x1 ^ (1 / ?!x0))) )
+									( ((?!x0 ^ ?fx0) = ?!x1) -> (?fx0 = (log ?!x0 ?!x1)) )
+									( ((?fx0 * ?fx1) = 0) -> (?fx0 = 0) )
 									( (?fx0 = ?fx1) -> ((?fx0 - ?fx1) = 0) )
 								 ) "A list of rules for isolating a variable")
-; (?so ((+ -) (- +)))
 (defun clone-variable (var val &optional (n 10))
 	"Creates n dummy variables that all have the same binding as val"
 	(case n	(0 `((,var . ,val)))
@@ -294,6 +302,15 @@
 (defun nsolve (equation &key (accuracy .0000001) (guess 1) (var 'x))
 	"Numerically solves an equation"
 	(find-zero `(,(car equation) - ,(caddr equation)) :accuracy accuracy :guess guess :var var))
+(defun derive (expression &optional (var 'x))
+	"Calculates d/dvar expression"
+	(simplify `((d ,var) ,expression)))
+(defun integrate (expression &key (low nil) (high nil) (var 'x))
+	"Calculates the definite or indefinite integral of expression dvar"
+	(if (or (null low) (null high))
+		`(,(simplify `((i ,var) ,expression)) + c)
+		(let ((F (simplify `((i ,var) ,expression))))
+			(simplify `(,(evaluate F `((,var . ,high))) - ,(evaluate F `((,var . ,low))))))))
 	
 ;examples
 ;;integrating 2x*sin(x^2) dx: (simplify '((i x) ((sin (x ^ 2)) * (2 * x))))
