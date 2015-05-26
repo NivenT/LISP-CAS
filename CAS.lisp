@@ -29,6 +29,9 @@
 (defun function-variablep (x)
 	"Returns whether or not x is a function variable (?fx represents any expression containing ?x)"
 	(and (variablep x) (>= (length (symbol-name x)) 3) (equal (char (symbol-name x) 1) #\F)))
+(defun predicate-variablep (x)
+	"Returns whether or not x is a predicate variable (?px matches input iff (x input) is not nil)"
+	(and (variablep x) (>= (length (symbol-name x)) 3) (equal (char (symbol-name x) 1) #\P) (fboundp (pred-func x))))
 (defun var-complement (x)
 	"Returns the constant variable that cannot contain x (?x -> ?!x)"
 	(read-from-string (concatenate 'string "?!" (subseq (symbol-name x) 1))))
@@ -41,6 +44,9 @@
 (defun var-func (x)
 	"Returns the function variable associated with x (?x -> ?fx)"
 	(read-from-string (concatenate 'string "?f" (subseq (symbol-name x) 1))))
+(defun pred-func (x)
+	"Returns the predicate associated with x (?pevenp -> evenp)"
+	(read-from-string (subseq (symbol-name x) 2)))
 (defun commutativep (op)
 	"Returns whether or not an operation is commutative"
 	(member op '(+ * =)))
@@ -87,10 +93,15 @@
 	"Returns the updated representation of variable"
 	(simplify (sublis bindings (cadr variable))))
 (defun function-var-match (variable input bindings)
-	"Returns the associated value of the constant variable or (T . T) if input is invalid"
+	"Returns the associated value of the function variable or (T . T) if input is invalid"
 	(cond 	((assoc variable bindings) (if (eq-expr (cdr (assoc variable bindings)) input) (assoc variable bindings) '(t . t)))
 			((not (assoc (func-arg variable) bindings)) (cons variable input))
 			((r-find (cdr (assoc (func-arg variable) bindings)) input) (cons variable input))
+			(t '(t . t))))
+(defun predicate-var-match (variable input bindings)
+	"Returns the associated value of the predicate variable or (T . T) if input is invalid"
+	(cond	((assoc variable bindings) (if (eq-expr (cdr (assoc variable bindings)) input) (assoc variable bindings) '(t . t)))
+			((funcall (pred-func variable) input) (cons variable input))
 			(t '(t . t))))
 (defun pat-match (pattern input &optional (bindings nil))
 	"Returns an association list of variable bindings"
@@ -100,6 +111,7 @@
 			((const-variablep (car pattern)) (pat-match (cdr pattern) (cdr input) (union bindings `(,(const-var-match (car pattern) (car input) bindings)))))
 			((update-variablep (car pattern)) (pat-match (cons (update-var (car pattern) bindings) (cdr pattern)) input bindings))
 			((function-variablep (car pattern)) (pat-match (cdr pattern) (cdr input) (union bindings `(,(function-var-match (car pattern) (car input) bindings)))))
+			((predicate-variablep (car pattern)) (pat-match (cdr pattern) (cdr input) (union bindings `(,(predicate-var-match (car pattern) (car input) bindings)))))
 			((variablep (car pattern)) (pat-match (cdr pattern) (cdr input) (union bindings (list (variable-match (car pattern) (car input) bindings)))))
 			((and (consp (car pattern)) (consp (car input))) (pat-match (cdr pattern) (cdr input) (pat-match (car pattern) (car input) bindings)))
 			(t (if (eq-expr (car pattern) (car input) nil) (pat-match (cdr pattern) (cdr input) bindings) (union bindings '((t . t)))))))
@@ -167,9 +179,9 @@
 										((log ?b ?b) = 1)
 										((log ?b (?x ^ ?n)) = (?n * (log ?b ?x)))
 										((sin PI) = 0)
-										((sin (?num0 * PI)) = 0)
+										((sin (?pintegerp * PI)) = 0)
 										((cos PI) = -1)
-										((cos (?num0 * PI)) = (-1 ^ ?num0))
+										((cos (?pintegerp * PI)) = (-1 ^ ?pintegerp))
 										(((?x * ?a) + (?x * ?b)) = ((?a + ?b) * ?x))
 										(((?x * ?a) + (?b * ?x)) = ((?a + ?b) * ?x))
 										(((?a * ?x) + (?x * ?b)) = ((?a + ?b) * ?x))
