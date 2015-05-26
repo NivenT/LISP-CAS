@@ -141,6 +141,7 @@
 										((?x + 0) = ?x)
 										((?x - 0) = ?x)
 										((0 - ?x) = (- ?x))
+										((- (- ?x)) = ?x)
 										((?x / 1) = ?x)
 										((0 / ?x) = 0)
 										((?x * 1) = ?x)
@@ -166,6 +167,8 @@
 										((log ?b (?x ^ ?n)) = (?n * (log ?b ?x)))
 										((sin PI) = 0)
 										((sin (?num0 * PI)) = 0)
+										((cos PI) = -1)
+										((cos (?num0 * PI)) = (-1 ^ ?num0))
 										(((?x * ?a) + (?x * ?b)) = ((?a + ?b) * ?x))
 										(((?x * ?a) + (?b * ?x)) = ((?a + ?b) * ?x))
 										(((?a * ?x) + (?x * ?b)) = ((?a + ?b) * ?x))
@@ -237,7 +240,7 @@
 					(when (consistent-bindingsp bindings)
 						(return-from simplify-helper (sublis bindings (caddr rule) :test #'eq-expr))))))
 		f))
-(defun simplify (expression &optional (rules *rules*) (prev-expr nil))
+(defun simplify (expression &optional (rules *rules*) (prev-expr expression))
 	"Simplifies an expression"
 	(let ((f (evaluate (simplify-helper expression rules))))
 		(if (consp f)
@@ -311,6 +314,16 @@
 		`(,(simplify `((i ,var) ,expression)) + c)
 		(let ((F (simplify `((i ,var) ,expression))))
 			(simplify `(,(evaluate F `((,var . ,high))) - ,(evaluate F `((,var . ,low))))))))
+(defun factorial (n)
+	"Computes n!"
+	(if (<= n 1) 1 (* n (factorial (1- n)))))
+(defun taylor (expression &key (c 0) (n 3) (var 'x))
+	"Computes the Taylor series about c of expression out to n terms"
+	(let ((f expression) (terms nil))
+		(loop for i from 0 to (1- n) do
+			(push (simplify `((,(evaluate f `((,var . ,c))) / ,(factorial i)) * ((,var - ,c) ^ ,i))) terms)
+			(setf f (derive f var)))
+		(simplify (apply #'sum (reverse terms)))))
 	
 ;examples
 ;;integrating 2x*sin(x^2) dx: (simplify '((i x) ((sin (x ^ 2)) * (2 * x))))
@@ -319,3 +332,5 @@
 ;;((5 * x)/(x + 9) - a) when x=4 and a=11: (evaluate '(((5 * x) / (x + 9)) - a) '((x . 4) (a . 11)))
 ;;solving 4x+8=10x-7: (solve '(((4 * x) + 8) = ((10 * x) - 7)))
 ;;solving lnx=sinx: (nsolve '((ln x) = (sin x)))
+;;computing the area under cos(x) from x=0 to x=PI: (integrate '(cos x) :low 0 :high 'PI)
+;;computing the Taylor series of E^x out to the x^7 term: (taylor '(E ^ x) :n 8)
