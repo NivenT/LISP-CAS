@@ -12,8 +12,8 @@
 							(2 (apply #'union lists))
 							(otherwise (union (car lists) (apply #'myunion (cdr lists))))))
 (defun mylength (seq)
-	"returns 0 for non-sequences"
-	(if (typep seq 'sequence) (length seq) 0))
+	"returns 1 for non-sequences"
+	(if (typep seq 'sequence) (length seq) 1))
 (defun variablep (x)
 	"Returns whether or not x is a variable (symbol of form ?x)"
 	(and (symbolp x) (equal (char (symbol-name x) 0) #\?)))
@@ -71,6 +71,9 @@
 			(and 	(consp a) (consp b) (eq (get-op a) (get-op b)) 
 					(or (and (eq-expr (first-operand a) (first-operand b) simp?) (eq-expr (second-operand a) (second-operand b) simp?))
 						(and (commutativep (get-op a)) (eq-expr (first-operand a) (second-operand b) simp?) (eq-expr (second-operand a) (first-operand b) simp?)))))))
+(defun consistent-bindingsp (bindings)
+	"Returns whether or not a list of bindings is valid (does not contain (T . T))"
+	(not (member '(t . t) bindings :test #'equalp)))
 (defun variable-match (variable input bindings)
 	"Returns the associated value of the variable or (T . T) if it would be associated with two values"
 	(cond 	((assoc variable bindings) (if (eq-expr (cdr (assoc variable bindings)) input) (assoc variable bindings) '(t . t)))
@@ -105,7 +108,8 @@
 			(t '(t . t))))
 (defun pat-match (pattern input &optional (bindings nil))
 	"Returns an association list of variable bindings"
-	(cond	((not (consp pattern)) bindings)
+	(cond	((not (consistent-bindingsp bindings)) bindings)
+			((not (consp pattern)) bindings)
 			((not (consp input))	'((t . t)))
 			((num-variablep (car pattern)) (pat-match (cdr pattern) (cdr input) (union bindings `(,(num-var-match (car pattern) (car input) bindings)))))
 			((const-variablep (car pattern)) (pat-match (cdr pattern) (cdr input) (union bindings `(,(const-var-match (car pattern) (car input) bindings)))))
@@ -115,9 +119,6 @@
 			((variablep (car pattern)) (pat-match (cdr pattern) (cdr input) (union bindings (list (variable-match (car pattern) (car input) bindings)))))
 			((and (consp (car pattern)) (consp (car input))) (pat-match (cdr pattern) (cdr input) (pat-match (car pattern) (car input) bindings)))
 			(t (if (eq-expr (car pattern) (car input) nil) (pat-match (cdr pattern) (cdr input) bindings) (union bindings '((t . t)))))))
-(defun consistent-bindingsp (bindings)
-	"Returns whether or not a list of bindings is valid (does not contain (T . T))"
-	(not (member '(t . t) bindings :test #'equalp)))
 (defun matches (pattern input)
 	"Returns whether or not input matches pattern"
 	(consistent-bindingsp (pat-match pattern input)))
@@ -155,6 +156,7 @@
 										((0 - ?x) = (- ?x))
 										((- (- ?x)) = ?x)
 										((?a - (- ?b)) = (?a + ?b))
+										((- (?a - ?b)) = (?b - ?a))
 										((?x / 1) = ?x)
 										((0 / ?x) = 0)
 										((?x * 1) = ?x)
@@ -193,7 +195,9 @@
 										(((?a * ?x) - (?x * ?b)) = ((?a - ?b) * ?x))
 										(((?a * ?x) - (?b * ?x)) = ((?a - ?b) * ?x))
 										((?x - (?x * ?b)) = ((1 - ?b) * ?x))
+										((?x - (?b * ?x)) = ((1 - ?b) * ?x))
 										(((?x * ?a) - ?x) = ((?a - 1) * ?x))
+										(((?a * ?x) - ?x) = ((?a - 1) * ?x))
 										(((- ?x) + ?a) = (?a - ?x))
 										((?a + (- ?x)) = (?a - ?x))
 									  ) "A list of rules for simplifying expressions")
@@ -263,10 +267,10 @@
 		expression))
 (defun find-zero (expression &key (accuracy .0000001) (guess 1) (var 'x))
 	"Finds a zero of expression"
-	(if (<= (abs (evaluate expression (list (cons var guess)))) accuracy)
+	(if (<= (abs (evaluate expression `((,var . ,guess) (E . 2.71828182845904523)))) accuracy)
 		guess
 		(find-zero expression :accuracy accuracy :var var :guess (- guess 
-			(/ (evaluate expression (list (cons var guess))) (evaluate (simplify `((d ,var) ,expression)) `((,var . ,guess))))))))
+			(/ (evaluate expression `((,var . ,guess) (E . 2.71828182845904523))) (evaluate (simplify `((d ,var) ,expression)) `((,var . ,guess) (E . 2.71828182845904523))))))))
 (defun find-extremum (expression &key (accuracy .0000001) (guess 1) (var 'x))
 	"Finds an extremum point of expression"
 	(let ((x (find-zero (simplify `((d ,var) ,expression)) :accuracy accuracy :guess guess :var var)))
@@ -276,6 +280,9 @@
 	(cond	((not (consp expression)) `(,expression))
 			((matches '(?a + ?b) expression) (append (terms (first-operand expression)) (terms (second-operand expression))))
 			((matches '(?a - ?b) expression) (append (terms (first-operand expression)) (terms `(- ,(second-operand expression)))))
+			((matches '(?a * ?b) expression) (loop for a in (terms (first-operand expression)) append
+												(loop for b in (terms (second-operand expression))
+													collect `(,a * ,b))))
 			((matches '(- (- ?a)) expression) (terms (cadadr expression)))
 			((matches '(- ?a) expression) (mapcar #'(lambda (x) (simplify `(- ,x))) (terms (cadr expression))))
 			(t `(,expression))))
@@ -309,13 +316,16 @@
 			(otherwise (union `((,(read-from-string (concatenate 'string (symbol-name var) (write-to-string (1- n)))) . ,val)) (clone-variable var val (1- n))))))
 (defun solve (equation &key (var 'x) (rules *isolation-rules*))
 	"Solves simple equations"
-	(let ((eqn `(,(clt (simplify (car equation)) var) = ,(clt (simplify (caddr equation)) var))))
-		(when (consp eqn)
-			(loop for rule in rules do
-				(let ((bindings (pat-match (car rule) eqn (clone-variable '?x var))))
-					(when (consistent-bindingsp bindings)
-						(return-from solve (solve (sublis bindings (caddr rule)) :var var :rules rules))))))
-		(evaluate eqn)))
+	(when (consp equation)
+		(loop for rule in rules do
+			(let ((bindings (pat-match (car rule) equation (clone-variable '?x var))))
+				(when (consistent-bindingsp bindings)
+					(let ((eqn (sublis bindings (caddr rule))))
+						(return-from solve (solve (simplify `(,(clt (car eqn) var) = ,(clt (caddr eqn) var))) :var var :rules rules)))))))
+	(let ((eqn (simplify equation)))
+		(if (equal equation eqn)
+			equation
+			(solve eqn :var var :rules rules))))
 (defun nsolve (equation &key (accuracy .0000001) (guess 1) (var 'x))
 	"Numerically solves an equation"
 	(find-zero `(,(car equation) - ,(caddr equation)) :accuracy accuracy :guess guess :var var))
@@ -333,11 +343,10 @@
 	(if (<= n 1) 1 (* n (factorial (1- n)))))
 (defun taylor (expression &key (c 0) (n 3) (var 'x))
 	"Computes the Taylor series about c of expression out to n terms"
-	(let ((f expression) (terms nil))
-		(loop for i from 0 to (1- n) do
-			(push (simplify `((,(evaluate f `((,var . ,c))) / ,(factorial i)) * ((,var - ,c) ^ ,i))) terms)
-			(setf f (derive f var)))
-		(simplify (apply #'sum (reverse terms)))))
+	(do (	(f expression (derive f var))
+			(terms nil (append terms (list (simplify `((,(evaluate f `((,var . ,c))) / ,(factorial i)) * ((,var - ,c) ^ ,i))))))
+			(i 0 (1+ i)))
+		((= i n) (apply #'sum (remove 0 terms)))))
 	
 ;examples
 ;;integrating 2x*sin(x^2) dx: (simplify '((i x) ((sin (x ^ 2)) * (2 * x))))
@@ -345,6 +354,7 @@
 ;;the derivative of x^x with respect to x: (simplify '((d x) (x ^ x)))
 ;;((5 * x)/(x + 9) - a) when x=4 and a=11: (evaluate '(((5 * x) / (x + 9)) - a) '((x . 4) (a . 11)))
 ;;solving 4x+8=10x-7: (solve '(((4 * x) + 8) = ((10 * x) - 7)))
+;;solving 2x+xy=5y: (solve '(((2 * x) + (x * y)) = (5 * y)) :var 'y)
 ;;solving lnx=sinx: (nsolve '((ln x) = (sin x)))
 ;;computing the area under xcos(x) from x=0 to x=PI: (integrate '(x * (cos x)) :low 0 :high 'PI)
 ;;computing the Taylor series of E^x out to the x^7 term: (taylor '(E ^ x) :n 8)
