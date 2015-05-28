@@ -14,6 +14,11 @@
 (defun mylength (seq)
 	"returns 1 for non-sequences"
 	(if (typep seq 'sequence) (length seq) 1))
+(defun r-length (seq)
+	"returns the recursive length of a sequence ( (1 2 (3 4) (5 (6 7) 8) 9) -> 9)"
+	(if (consp seq)
+		(apply #'+ (mapcar #'r-length seq))
+		1))
 (defun variablep (x)
 	"Returns whether or not x is a variable (symbol of form ?x)"
 	(and (symbolp x) (equal (char (symbol-name x) 0) #\?)))
@@ -52,7 +57,7 @@
 	(member op '(+ * =)))
 (defun unaryp (op)
 	"Returns whether or not an operation is unary"
-	(or	(member op '(sin cos tan sinh cosh tanh ln sqrt))
+	(or	(member op '(sin cos tan sinh cosh tanh ln sqrt asin acos atan asinh acosh atanh))
 		(and (consp op) (or (matches '(d ?x) op) (matches '(i ?x) op)))))
 (defun get-op (expr)
 	"Returns the operation in an expression"
@@ -148,6 +153,7 @@
 			f)))
 (defparameter *simplification-rules* '(	((?x + ?x) = (2 * ?x))
 										((?x - ?x) = 0)
+										(((- ?x) - ?x) = (-2 * ?x))
 										((?x * ?x) = (?x ^ 2))
 										((?x / ?x) = 1)
 										((0 + ?x) = ?x)
@@ -165,6 +171,7 @@
 										((0 * ?x) = 0)
 										((?x ^ 0) = 1)
 										((?x ^ 1) = ?x)
+										(((?x ^ ?a) ^ ?b) = (?x ^ (?a * ?b)))
 										((?x * (?x ^ ?n)) = (?x ^ (1 + ?n)))
 										(((?x ^ ?n) * ?x) = (?x ^ (?n + 1)))
 										(((?x ^ ?n) * (?x ^ ?m)) = (?x ^ (?n + ?m)))
@@ -182,14 +189,18 @@
 										((log ?b (?x ^ ?n)) = (?n * (log ?b ?x)))
 										((sin PI) = 0)
 										((sin (?pintegerp * PI)) = 0)
+										((sin (PI * ?pintegerp)) = 0)
 										((cos PI) = -1)
 										((cos (?pintegerp * PI)) = (-1 ^ ?pintegerp))
+										((cos (PI * ?pintegerp)) = (-1 ^ ?pintegerp))
 										(((?x * ?a) + (?x * ?b)) = ((?a + ?b) * ?x))
 										(((?x * ?a) + (?b * ?x)) = ((?a + ?b) * ?x))
 										(((?a * ?x) + (?x * ?b)) = ((?a + ?b) * ?x))
 										(((?a * ?x) + (?b * ?x)) = ((?a + ?b) * ?x))
 										((?x + (?x * ?b)) = ((1 + ?b) * ?x))
+										((?x + (?b * ?x)) = ((1 + ?b) * ?x))
 										(((?x * ?a) + ?x) = ((?a + 1) * ?x))
+										(((?a * ?x) + ?x) = ((?a + 1) * ?x))
 										(((?x * ?a) - (?x * ?b)) = ((?a - ?b) * ?x))
 										(((?x * ?a) - (?b * ?x)) = ((?a - ?b) * ?x))
 										(((?a * ?x) - (?x * ?b)) = ((?a - ?b) * ?x))
@@ -216,6 +227,7 @@
 										(((d ?x) (- ?f)) = (- ((d ?x) ?f)))
 										(((d ?x) (?f * ?g)) = ((((d ?x) ?f) * ?g) + (?f * ((d ?x) ?g))))
 										(((d ?x) (?f / ?g)) = (((((d ?x) ?f) * ?g) - (?f * ((d ?x) ?g))) / (?g ^ 2)))
+										(((d ?x) ((i ?x) ?f)) = ?f)
 										(((d ?x) ?f) = ((d ?x) (E ^ (ln ?f)))) ;;If all else fails...
 									  ) "A list of rules for taking derivatives of expressions")
 (defparameter *integration-rules*	 '(	(((i ?x) ?!x) = (?x * ?!x))
@@ -247,6 +259,7 @@
 										(((i ?x) (?f + ?g)) = (((i ?x) ?f) + ((i ?x) ?g)))
 										(((i ?x) (?f - ?g)) = (((i ?x) ?f) - ((i ?x) ?g)))
 										(((i ?x) (- ?f)) = (- ((i ?x) ?f)))
+										(((i ?x) ((d ?x) ?f)) = ?f)
 										(((i ?x) (?f * ?g)) = ((?f * ((i ?x) ?g)) - ((i ?x) (((i ?x) ?g) * ((d ?x) ?f)))))
 									  ) "A list of rules for integrating expressions")
 (defparameter *rules* (myunion *simplification-rules* *integration-rules* *derivation-rules*) "All rules")
@@ -267,10 +280,10 @@
 		expression))
 (defun find-zero (expression &key (accuracy .0000001) (guess 1) (var 'x))
 	"Finds a zero of expression"
-	(if (<= (abs (evaluate expression `((,var . ,guess) (E . 2.71828182845904523)))) accuracy)
+	(if (<= (abs (evaluate expression `((,var . ,guess) (E . ,(exp 1)) (PI . ,PI)))) accuracy)
 		guess
 		(find-zero expression :accuracy accuracy :var var :guess (- guess 
-			(/ (evaluate expression `((,var . ,guess) (E . 2.71828182845904523))) (evaluate (simplify `((d ,var) ,expression)) `((,var . ,guess) (E . 2.71828182845904523))))))))
+			(/ (evaluate expression `((,var . ,guess) (E . ,(exp 1)) (PI . ,PI))) (evaluate (simplify `((d ,var) ,expression)) `((,var . ,guess) (E . ,(exp 1)) (PI . ,PI))))))))
 (defun find-extremum (expression &key (accuracy .0000001) (guess 1) (var 'x))
 	"Finds an extremum point of expression"
 	(let ((x (find-zero (simplify `((d ,var) ,expression)) :accuracy accuracy :guess guess :var var)))
@@ -283,7 +296,6 @@
 			((matches '(?a * ?b) expression) (loop for a in (terms (first-operand expression)) append
 												(loop for b in (terms (second-operand expression))
 													collect `(,a * ,b))))
-			((matches '(- (- ?a)) expression) (terms (cadadr expression)))
 			((matches '(- ?a) expression) (mapcar #'(lambda (x) (simplify `(- ,x))) (terms (cadr expression))))
 			(t `(,expression))))
 (defun sum (&rest terms)
@@ -292,11 +304,15 @@
 							(1 (car terms))
 							(2 `(,(car terms) + ,(cadr terms)))
 							(otherwise (apply #'sum `(,(car terms) + ,(cadr terms)) (cddr terms)))))
-(defun clt (expression &optional (var 'x))
-	"Combines like terms"
-	(let ((sorted-terms (sort (terms expression) #'> :key #'(lambda (term) (mylength (r-find var term))))))
-		(simplify (apply #'sum sorted-terms))))
+(defun clt (expression &optional (var nil))
+	"Combines numerical terms and terms that share var as a factor"
+	(if (null var)
+		(let ((sorted-terms (sort (terms expression) #'> :key #'(lambda (term) (if (numberp term) (abs term) 0)))))
+			(simplify (apply #'sum sorted-terms))) 
+		(let ((sorted-terms (sort (terms expression) #'> :key #'(lambda (term) (if (r-find var term) (mylength term) 0)))))
+			(clt (simplify (apply #'sum sorted-terms))))))
 (defparameter *isolation-rules*	'(	( (?!x0 = ?fx) -> (?fx = ?!x0) )
+									( ((- ?fx0) = ?!x0) -> (?fx0 = (- ?!x0)) )
 									( ((?fx0 + ?!x0) = ?!x1) -> (?fx0 = (?!x1 - ?!x0)) )
 									( ((?!x0 + ?fx0) = ?!x1) -> (?fx0 = (?!x1 - ?!x0)) )
 									( ((?fx0 - ?!x0) = ?!x1) -> (?fx0 = (?!x1 + ?!x0)) )
@@ -307,6 +323,12 @@
 									( ((?!x0 / ?fx0) = ?!x1) -> (?fx0 = (?!x0 / ?!x1)) )
 									( ((?fx0 ^ ?!x0) = ?!x1) -> (?fx0 = (?!x1 ^ (1 / ?!x0))) )
 									( ((?!x0 ^ ?fx0) = ?!x1) -> (?fx0 = (log ?!x0 ?!x1)) )
+									( ((sin ?fx0) = ?!x0) -> (?fx0 = (asin ?!x0)) )
+									( ((cos ?fx0) = ?!x0) -> (?fx0 = (acos ?!x0)) )
+									( ((ln ?fx0) = ?!x0) -> (?fx0 = (E ^ ?!x0)) )
+									( ((log ?b ?fx0) = ?!x0) -> (?fx0 = (?b ^ ?!x0)) )
+									( ((?fx0 / ?fx1) = 0) -> (?fx0 = 0) )
+									( ((?fx0 / ?fx1) = ?!x0) -> (?fx0 = (?!x0 * ?fx1)) )
 									( ((?fx0 * ?fx1) = 0) -> (?fx0 = 0) )
 									( (?fx0 = ?fx1) -> ((?fx0 - ?fx1) = 0) )
 								 ) "A list of rules for isolating a variable")
@@ -322,13 +344,25 @@
 				(when (consistent-bindingsp bindings)
 					(let ((eqn (sublis bindings (caddr rule))))
 						(return-from solve (solve (simplify `(,(clt (car eqn) var) = ,(clt (caddr eqn) var))) :var var :rules rules)))))))
-	(let ((eqn (simplify equation)))
+	(let ((eqn (simplify `(,(clt (car equation) var) = ,(clt (caddr equation) var)))))
 		(if (equal equation eqn)
 			equation
 			(solve eqn :var var :rules rules))))
 (defun nsolve (equation &key (accuracy .0000001) (guess 1) (var 'x))
 	"Numerically solves an equation"
 	(find-zero `(,(car equation) - ,(caddr equation)) :accuracy accuracy :guess guess :var var))
+(defun solve-system-helper (vars equations &optional (known nil))
+	(loop for eqn in equations do
+		(loop for var in vars do
+			(let ((sol (solve eqn :var var)))
+				(if (eq (car sol) var)
+					(return-from solve-system-helper 
+						(solve-system-helper (remove var vars) (subst (caddr sol) (car sol) (remove eqn equations)) (append known `(,sol))))))))
+	known)
+(defun solve-system (vars &rest equations)
+	"Solves simple systems of equations"
+	(let ((sol (solve-system-helper vars equations)))
+		(solve-system-helper vars (sort sol #'< :key #'r-length))))
 (defun derive (expression &optional (var 'x))
 	"Calculates d/dvar expression"
 	(simplify `((d ,var) ,expression)))
@@ -346,7 +380,7 @@
 	(do (	(f expression (derive f var))
 			(terms nil (append terms (list (simplify `((,(evaluate f `((,var . ,c))) / ,(factorial i)) * ((,var - ,c) ^ ,i))))))
 			(i 0 (1+ i)))
-		((= i n) (apply #'sum (remove 0 terms)))))
+		((= i n) (apply #'sum (remove 0 terms :test #'equalp)))))
 	
 ;examples
 ;;integrating 2x*sin(x^2) dx: (simplify '((i x) ((sin (x ^ 2)) * (2 * x))))
