@@ -367,7 +367,7 @@
 	"Solves simple systems of equations"
 	(let ((sol (solve-system-helper vars equations)))
 		(solve-system-helper vars (sort sol #'< :key #'r-length))))
-(defun derive (expression &optional (var 'x))
+(defun differentiate (expression &optional (var 'x))
 	"Calculates d/dvar expression"
 	(simplify `((d ,var) ,expression)))
 (defun integrate (expression &key (low nil) (high nil) (var 'x))
@@ -381,7 +381,7 @@
 	(if (<= n 1) 1 (* n (factorial (1- n)))))
 (defun taylor (expression &key (c 0) (n 3) (var 'x))
 	"Computes the Taylor series about c of expression out to n terms"
-	(do (	(f expression (derive f var))
+	(do (	(f expression (differentiate f var))
 			(terms nil (append terms (list (simplify `((,(evaluate f `((,var . ,c))) / ,(factorial i)) * ((,var - ,c) ^ ,i))))))
 			(i 0 (1+ i)))
 		((= i n) (apply #'sum (remove 0 terms :test #'equalp)))))
@@ -390,7 +390,7 @@
 ;;integrating 2x*sin(x^2) dx: (simplify '((i x) ((sin (x ^ 2)) * (2 * x))))
 ;;integrating sin(ln(x))/x+sin(x)*cos(x) dx: (integrate '(((sin (ln x)) * (1 / x)) + ((sin x) * (cos x))))
 ;;the derivative of x^x with respect to x: (simplify '((d x) (x ^ x)))
-;;the derivative of E^sin(y*x^2) with respect to y: (derive '(E ^ (sin (y * (x ^ 2)))) 'y)
+;;the derivative of E^sin(y*x^2) with respect to y: (differentiate '(E ^ (sin (y * (x ^ 2)))) 'y)
 ;;((5 * x)/(x + 9) - a) when x=4 and a=11: (evaluate '(((5 * x) / (x + 9)) - a) '((x . 4) (a . 11)))
 ;;solving 4x+8=10x-7: (solve '(((4 * x) + 8) = ((10 * x) - 7)))
 ;;solving 2x+xy=5y: (solve '(((2 * x) + (x * y)) = (5 * y)) :var 'y)
