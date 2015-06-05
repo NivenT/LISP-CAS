@@ -281,13 +281,13 @@
 		(let ((f (simplify-helper (loop for term in expression collect (simplify term rules)) rules)))
 			(if (equalp prev-expr f) f (simplify f rules)))
 		expression))
-(defun find-zero (expression &key (accuracy .0000001) (guess 1) (var 'x))
+(defun find-zero (expression &key (accuracy .0000001) (guess 1.0) (var 'x))
 	"Finds a zero of expression"
 	(if (<= (abs (evaluate expression `((,var . ,guess) (E . ,(exp 1)) (PI . ,PI)))) accuracy)
 		guess
 		(find-zero expression :accuracy accuracy :var var :guess (- guess 
 			(/ (evaluate expression `((,var . ,guess) (E . ,(exp 1)) (PI . ,PI))) (evaluate (simplify `((d ,var) ,expression)) `((,var . ,guess) (E . ,(exp 1)) (PI . ,PI))))))))
-(defun find-extremum (expression &key (accuracy .0000001) (guess 1) (var 'x))
+(defun find-extremum (expression &key (accuracy .0000001) (guess 1.0) (var 'x))
 	"Finds an extremum point of expression"
 	(let ((x (find-zero (simplify `((d ,var) ,expression)) :accuracy accuracy :guess guess :var var)))
 		(list x (evaluate expression `((,var . ,x))))))
@@ -355,7 +355,7 @@
 		(if (equal equation eqn)
 			equation
 			(solve eqn :var var :rules rules))))
-(defun nsolve (equation &key (accuracy .0000001) (guess 1) (var 'x))
+(defun nsolve (equation &key (accuracy .0000001) (guess 1.0) (var 'x))
 	"Numerically solves an equation"
 	(find-zero `(,(car equation) - ,(caddr equation)) :accuracy accuracy :guess guess :var var))
 (defun solve-system-helper (vars equations &optional (known nil))
@@ -398,6 +398,9 @@
 	"Multiplies two matrices"
 	(when (= (length (car mat1)) (length mat2))
 		(loop for row in mat1 collect (mapcar #'(lambda (c) (dot row (col mat2 c))) (range (length (car mat2)))))))
+(defun jacobian (vars &rest eqns)
+	"Returns the jacobian of eqns with respect to vars"
+	(loop for f in eqns collect (loop for x in vars collect (differentiate f x))))
 	
 ;examples
 ;;integrating 2x*sin(x^2) dx: (simplify '((i x) ((sin (x ^ 2)) * (2 * x))))
