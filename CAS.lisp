@@ -1,3 +1,6 @@
+(defun range (max &key (min 0) (step 1) (runninglist nil))
+	"Generates a list of numbers from min to max (exclusive)"
+	(if (<= max min) runninglist (range max :min (+ min step) :step step :runninglist (append runninglist `(,min)))))
 (defun r-find (item list)
 	"Recursively searches list for item"
 	(cond	((consp list)	(or (member item list) (some #'(lambda (x) (r-find item x)) list)))
@@ -385,6 +388,16 @@
 			(terms nil (append terms (list (simplify `((,(evaluate f `((,var . ,c))) / ,(factorial i)) * ((,var - ,c) ^ ,i))))))
 			(i 0 (1+ i)))
 		((= i n) (apply #'sum (remove 0 terms :test #'equalp)))))
+(defun col (mat i)
+	"Returns column i of a matrix"
+	(loop for row in mat collect (elt row i)))
+(defun dot (vec1 vec2)
+	"Returns the dot product of two vectors"
+	(simplify (apply #'sum (loop for a in vec1 for b in vec2 collect `(,a * ,b)))))
+(defun mat-mult (mat1 mat2)
+	"Multiplies two matrices"
+	(when (= (length (car mat1)) (length mat2))
+		(loop for row in mat1 collect (mapcar #'(lambda (c) (dot row (col mat2 c))) (range (length (car mat2)))))))
 	
 ;examples
 ;;integrating 2x*sin(x^2) dx: (simplify '((i x) ((sin (x ^ 2)) * (2 * x))))
