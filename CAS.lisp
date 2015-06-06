@@ -1,6 +1,8 @@
 (defun range (max &key (min 0) (step 1) (runninglist nil))
 	"Generates a list of numbers from min to max (exclusive)"
 	(if (<= max min) runninglist (range max :min (+ min step) :step step :runninglist (append runninglist `(,min)))))
+(defun all (pred one-seq &rest sequences)
+	(if (null sequences) (not (some (complement pred) one-seq)) (not (some (complement pred) one-seq sequences))))
 (defun r-find (item list)
 	"Recursively searches list for item"
 	(cond	((consp list)	(or (member item list) (some #'(lambda (x) (r-find item x)) list)))
@@ -16,6 +18,9 @@
 	(if (consp seq)
 		(apply #'+ (mapcar #'r-length seq))
 		1))
+(defun flatten (list)
+	"Returns a singe list with all elements contained in list ( (1 2 (3 4) (5 (6 7) 8)) -> (1 2 3 4 5 6 7 8))"
+	(cond	((null list) nil) ((atom (car list)) (append (list (car list)) (flatten (cdr list)))) (t (append (flatten (car list)) (flatten (cdr list))))))
 (defun variablep (x)
 	"Returns whether or not x is a variable (symbol of form ?x)"
 	(and (symbolp x) (equal (char (symbol-name x) 0) #\?)))
@@ -388,9 +393,18 @@
 			(terms nil (append terms (list (simplify `((,(evaluate f `((,var . ,c))) / ,(factorial i)) * ((,var - ,c) ^ ,i))))))
 			(i 0 (1+ i)))
 		((= i n) (apply #'sum (remove 0 terms :test #'equalp)))))
+(defun row (mat i)
+	"Returns row i of a matrix"
+	(elt mat i))
 (defun col (mat i)
 	"Returns column i of a matrix"
 	(loop for row in mat collect (elt row i)))
+(defun entry (mat i j)
+	"Returns entry (i,j) of a matrix"
+	(elt (elt mat i) j))
+(defun vec-sub (vec1 vec2)
+	"Elementwise substraction of two vectors"
+	(loop for a in vec1 for b in vec2 collect (simplify `(,a - ,b))))
 (defun dot (vec1 vec2)
 	"Returns the dot product of two vectors"
 	(simplify (apply #'sum (loop for a in vec1 for b in vec2 collect `(,a * ,b)))))
@@ -398,9 +412,40 @@
 	"Multiplies two matrices"
 	(when (= (length (car mat1)) (length mat2))
 		(loop for row in mat1 collect (mapcar #'(lambda (c) (dot row (col mat2 c))) (range (length (car mat2)))))))
-(defun jacobian (vars &rest eqns)
+(defun jacobian (vars eqns)
 	"Returns the jacobian of eqns with respect to vars"
 	(loop for f in eqns collect (loop for x in vars collect (differentiate f x))))
+(defun mat-eval (mat bindings)
+	"Evaluates every entry in the matrix"
+	(loop for row in mat collect (mapcar #'(lambda (x) (evaluate x bindings)) row)))
+(defun identity-mat (n)
+	"Returns the n x n identity matrix"
+	(loop for i in (range n) collect (mapcar #'(lambda (x) (if (= x i) 1 0)) (range n))))
+(defun reduce-mat (mat pivot-row pivot-col)
+	"Performs row reduction of mat so that every entry in the pivot-col is 0 except for the one at the pivot row"
+	(let ((reduced mat) (cols (range (length (car mat)))))
+		(setf (elt reduced pivot-row) (mapcar #'(lambda (x) (/ x (entry reduced pivot-row pivot-col))) (row reduced pivot-row)))
+		(loop for row in (range (length mat)) do (unless (= row pivot-row) 
+			(setf (elt reduced row) (mapcar #'(lambda (i) (- (entry reduced row i) (* (entry reduced row pivot-col) (entry reduced pivot-row i)))) cols))))
+		reduced))
+(defun inv-mat (mat)
+	"Inverts a square, numeric matrix"
+	(let* ((n (length mat)) (augmented (loop for row1 in mat for row2 in (identity-mat n) collect (append row1 row2))))
+		(loop for i in (range n) do (setf augmented (reduce-mat augmented i i)))
+		(mapcar #'(lambda (row) (last row n)) augmented)))
+(defun make-bindings (vars vals)
+	"Returns a list of bindings"
+	(loop for var in vars for val in vals collect (cons var val)))
+(defun find-zero-vec (vars expressions &key (accuracy .0000001) (guess (make-list (length vars) :initial-element 1.0)))
+	"Finds values for vars such that all expressions are 0"
+	(let ((bindings (union (make-bindings vars guess) `((E . ,(exp 1)) (PI . ,PI)))))
+		(if (all #'(lambda (expr) (<= (abs (evaluate expr bindings)) accuracy)) expressions)
+			guess
+			(find-zero-vec vars expressions :accuracy accuracy :guess (vec-sub guess (flatten (mat-mult
+				(inv-mat (mat-eval (jacobian vars expressions) bindings)) (mat-eval (mapcar #'list expressions) bindings))))))))
+(defun nsolve-system (vars &rest equations)
+	"Numerically solves a system of equations"
+	(find-zero-vec vars (mapcar #'(lambda (eqn) `(,(car eqn) - ,(caddr eqn))) equations)))
 	
 ;examples
 ;;integrating 2x*sin(x^2) dx: (simplify '((i x) ((sin (x ^ 2)) * (2 * x))))
@@ -415,3 +460,4 @@
 ;;computing the Taylor series of E^x out to the x^7 term: (taylor '(E ^ x) :n 8)
 ;;solving the system x+y=22 and x-y=10: (solve-system '(x y) '((x + y) = 22) '((x - y) = 10))
 ;;solving the system sin(x * y)=-.3 and cos(x + y)=1: (solve-system '(x y) '((sin (x * y)) = -.3) '((cos (x + y)) = 1))
+;;solving the system sin(2x + y)=5/13 and cos(x * y)=12/13: (nsolve-system '(x y) '((sin ((2 * x) + y)) = 5/13) '((cos (x * y)) = 12/13))
