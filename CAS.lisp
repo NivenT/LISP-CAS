@@ -157,7 +157,11 @@
 										((?x - ?x) = 0)
 										(((- ?x) - ?x) = (-2 * ?x))
 										((?x * ?x) = (?x ^ 2))
+										(((- ?x) * ?x) = (- (?x ^ 2)))
+										((?x * (- ?x)) = (- (?x ^ 2)))
 										((?x / ?x) = 1)
+										(((- ?x) / ?x) = -1)
+										((?x / (- ?x)) = -1)
 										((0 + ?x) = ?x)
 										((?x + 0) = ?x)
 										((?x - 0) = ?x)
@@ -298,12 +302,13 @@
 		(list x (evaluate expression `((,var . ,x))))))
 (defun terms (expression)
 	"Returns a list of terms in expression"
-	(cond	((not (consp expression)) `(,expression))
-			((matches '(?a + ?b) expression) (append (terms (first-operand expression)) (terms (second-operand expression))))
+	(cond	((matches '(?a + ?b) expression) (append (terms (first-operand expression)) (terms (second-operand expression))))
 			((matches '(?a - ?b) expression) (append (terms (first-operand expression)) (terms `(- ,(second-operand expression)))))
 			((matches '(?a * ?b) expression) (loop for a in (terms (first-operand expression)) append
 												(loop for b in (terms (second-operand expression))
 													collect `(,a * ,b))))
+			((matches '(?a / ?b) expression) (loop for a in (terms (first-operand expression)) collect
+												`(,a / ,(second-operand expression))))
 			((matches '(- ?a) expression) (mapcar #'(lambda (x) (simplify `(- ,x))) (terms (cadr expression))))
 			(t `(,expression))))
 (defun sum (&rest terms)
