@@ -1,13 +1,16 @@
 (load "pat-match.lisp")
+(defun sec (x) (/ (cos x))) (defun cot (x) (/ (tan x))) (defun csc (x) (/ (sin x)))
+(defun sech (x) (/ (cosh x))) (defun coth (x) (/ (tanh x))) (defun csch (x) (/ (sinh x)))
 (defun lisp-opp (x)
 	"Returns whether or not x is an operation that can be evaulated by LISP"
-	(member x '(+ - * / expt sin cos tan log exp sinh cosh)))
+	(member x '(+ - * / expt sin cos tan exp sinh cosh tanh sec cot csc sech coth csch)))
 (defun opp (x)
 	"Returns whether or not x is an operation"
-	(or (lisp-opp x) (pat-match '(d ?x) x) (pat-match '(i ?x) x)))
+	(or (lisp-opp x) (pat-match '(d ?x) x) (pat-match '(i ?x) x) (member x '(log))))
 (defun unaryp (x)
 	"Returns whether or not x is a unary operation"
-	(member x '(sin cos tan log exp))) ;;log is the natural logarithm
+	;;log is the natural logarithm
+	(member x '(sin cos tan log exp sinh cosh tanh sec cot csc sech coth csch)))
 (defun commp (x)
 	"Returns whether or not x is a communative operation"
 	(member x '(+ *)))
@@ -46,8 +49,6 @@
 			(t 1)))
 (defun simpler? (a b)
 	(< (complexity a) (complexity b)))
-(defparameter *const-1* `((E . 2.718281828) (PI . ,*pi*)))
-(defparameter *const-2* `((2.718281828 . E) (,*pi* . PI)))
 (defparameter *simplification-rules* '(	((?x* (?if (contains 'UNDEFINED '?x*))) = UNDEFINED)
 										(((?or + -)) = 0)
 										(((?or * /)) = 1)
@@ -80,7 +81,13 @@
 										((+ ?a* (* ?c* ?x ?d*) ?b* ?x ?e*) = (+ (* (+ (* ?c* ?d*) 1) ?x) ?a* ?b* ?e*))
 										((+ ?a* (* ?b* ?x ?c*) ?d* (* ?e* ?x ?f*) ?g*) = (+ (* (+ (* ?b* ?c*) (* ?e* ?f*)) ?x) ?a* ?d* ?g*))
 									  	((expt ?a) = 0)
-									  ) "A list of rules for simplifying expressions")
+									  	((* ?a* (- ?x) ?b* (- ?y) ?c*) = (* ?a* ?x ?b* ?y ?c*))
+									  	((log (expt ?a ?b)) = (* ?b (log ?a)))
+									  	((log E) = 1)
+									  	((expt E (log ?x)) = ?x)
+									  	((* ?a* ?x ?b* (/ ?c* ?x ?d*) ?e*) = (* ?a* ?b* (/ ?c* ?d*)))
+									  	((* ?a* (/ ?c* ?x ?d*) ?b* ?x ?e*) = (* ?a* ?b* (/ ?c* ?d*)))
+									) "A list of rules for simplifying expressions")
 (defparameter *differentiation-rules* '((((d ?x) ?y (?if (not (contains '?x '?y)))) = 0)
 										(((d ?x) ?x) = 1)
 										(((d ?x) (+ ?f ?g*)) = (+ ((d ?x) ?f) ((d ?x) (+ ?g*))))
@@ -90,13 +97,24 @@
 									 	(((d ?x) (/ 1 ?f)) = (/ (- ((d ?x) ?f)) (expt ?f 2)))
 									 	(((d ?x) (/ ?f ?g)) = (/ (- (* ((d ?x) ?f) ?g) (* ((d ?x) ?g) ?f)) (expt ?g 2)))
 									 	(((d ?x) (/ ?f ?g ?h*)) = (+ (/ (/ (- (* ((d ?x) ?f) ?g) (* ((d ?x) ?g) ?f)) (expt ?g 2)) ?h*) (/ (* (- ((d ?x) (* ?h*))) ?f) ?g (expt (* ?h*) 2)))) 
-									 	(((d ?x) (expt ?f (?n is numberp))) = (* ((d ?x) ?f) ?n (expt ?f (- ?n 1))))
-									 	(((d ?x) (expt (?n is numberp) ?f)) = (* ((d ?x) ?f) (log ?n) (expt ?n ?f)))
-									 ) "A list of rules for calculating derivatives")
-(setf *simplification-rules*
-	(sort *simplification-rules* (lambda (a b) (simpler? (caddr a) (caddr b)))))
-(setf *differentiation-rules*
-	(sort *differentiation-rules* (lambda (a b) (simpler? (caddr a) (caddr b)))))
+									 	(((d ?x) (expt ?f ?n) (?if (not (contains '?x '?n)))) = (* ((d ?x) ?f) ?n (expt ?f (- ?n 1))))
+									 	(((d ?x) (expt ?n ?f) (?if (not (contains '?x '?n)))) = (* ((d ?x) ?f) (log ?n) (expt ?n ?f)))
+									 	(((d ?x) (log ?f)) = (/ ((d ?x) ?f) ?f))
+									 	(((d ?x) (sin ?f)) = (* ((d ?x) ?f) (cos ?f)))
+									 	(((d ?x) (cos ?f)) = (* ((d ?x) ?f) (- (sin ?f))))
+									 	(((d ?x) (tan ?f)) = (* ((d ?x) ?f) (expt (sec ?f) 2)))
+									 	(((d ?x) ?f (?if (not (pat-match '(expt E (log ?g)) '?f)))) = ((d ?x) (expt E (log ?f))))
+									) "A list of rules for calculating derivatives")
+(defparameter *integration-rules* '( 	(((i ?x) ?y (?if (not (contains '?x '?y)))) = (* ?x ?y))
+										(((i ?x) ?x) = (/ (expt ?x 2) 2))
+										(((i ?x) (+ ?f ?g*)) = (+ ((i ?x) ?f) ((i ?x) (+ ?g*))))
+										(((i ?x) (- ?f ?g*)) = (- ((i ?x) ?f) ((i ?x) (+ ?g*))))
+										(((i ?x) (* ?f* ?y ?g*) (?if (not (contains '?x '?y)))) = (* ?y ((i ?x) (* ?f* ?g*))))
+									) "A list of rules for calculating indefinite integrals")
+;(setf *simplification-rules*
+;	(sort *simplification-rules* (lambda (a b) (simpler? (caddr a) (caddr b)))))
+;(setf *differentiation-rules*
+;	(sort *differentiation-rules* (lambda (a b) (simpler? (caddr a) (caddr b)))))
 (defun pre->in (expr)
 	"Converts an expression from prefix to infix"
 	(if (consp expr)
@@ -126,7 +144,7 @@
 		expr))
 (defun simplify (expr &optional (to-infix t))
 	"Simplifies an expression"
-	(let ((simp (sublis *const-2* (transform (sublis *const-1* (in->pre expr)) 
-		(append *simplification-rules* *differentiation-rules*) 
-		:rewrite (compose #'evaluate #'absorb-args)))))
+	(let ((simp (transform (in->pre expr) 
+					(append *simplification-rules* *differentiation-rules* *integration-rules*) 
+					:rewrite (compose #'evaluate #'absorb-args))))
 			(if to-infix (pre->in simp) simp)))
