@@ -63,17 +63,20 @@
 			((and (consp pattern) (consp input)) 
 				(let ((first (pat-match (car pattern) (car input) bindings)))
 					(when first (pat-match (cdr pattern) (cdr input) first))))
+			;((and (consp pattern) (consp input))
+			;	(let ((rest (pat-match (cdr pattern) (cdr input) bindings)))
+			;		(when rest (pat-match (car pattern) (car input) rest))))
 			))
-(defun transform-helper (expr rules)
+(defun transform-helper (expr rules bindings)
 	"Transforms an expression, treating it as one unit"
 	(loop for rule in rules do
-		(let ((bindings (pat-match (car rule) expr)))
+		(let ((bindings (pat-match (car rule) expr bindings)))
 			(when bindings (return-from transform-helper (sublis bindings (caddr rule))))))
 	expr)
-(defun transform (expr rules &key (rewrite #'identity))
+(defun transform (expr rules &key (rewrite #'identity) (bindings nil))
 	"Transforms an expression given a set of rules"
 	(if (consp expr)
 		(let ((new (funcall rewrite (transform-helper (loop for term in expr collect 
-				(transform term rules :rewrite rewrite)) rules))))
-			(if (equalp expr new) new (transform new rules :rewrite rewrite)))
-		(transform-helper expr rules)))
+				(transform term rules :rewrite rewrite :bindings bindings)) rules bindings))))
+			(if (equalp expr new) new (transform new rules :rewrite rewrite :bindings bindings)))
+		(transform-helper expr rules bindings)))
