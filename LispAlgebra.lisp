@@ -1,15 +1,15 @@
-(load "pat-match.lisp")
+(load "na/pat-match.lisp")
 (defun sec (x) (/ (cos x))) (defun cot (x) (/ (tan x))) (defun csc (x) (/ (sin x)))
 (defun sech (x) (/ (cosh x))) (defun coth (x) (/ (tanh x))) (defun csch (x) (/ (sinh x)))
 (defun eval-opp (x)
 	"Returns whether or not x is an operation that will be evaulated by eval normally"
-	(member x '(+ - * /)))
+	(member x '(+ - * / expt)))
 (defun lisp-opp (x)
 	"Returns whether or not x is an operation that can be evaulated by LISP"
 	(member x '(+ - * / expt sin cos tan exp log sinh cosh tanh sec cot csc sech coth csch asin acos atan)))
 (defun opp (x)
 	"Returns whether or not x is an operation"
-	(or (lisp-opp x) (pat-match '(d ?x) x) (pat-match '(i ?x) x)))
+	(or (lisp-opp x) (pat-match '(d ?x) x) (pat-match '(i ?x) x) (pat-match '(lim ?x ?c) x) ))
 (defun unaryp (x)
 	"Returns whether or not x is a unary operation"
 	;;log is the natural logarithm
@@ -75,7 +75,7 @@
 						(return-from u-sub (simplify `(* ,k ((i ,u) ,f)))))))
 			(let* ((x (cadar expr)) (y (cadr expr)) (k (simplify `(/ ,y ,f ((d ,x) ,f)) :to-infix nil)))
 				;(print k)
-				(unless (or (contains x k) (equalp x f))
+				(unless (or (contains x k) (equalp x f) (equalp k 'UNDEFINED))
 					(return-from u-sub (simplify `(* ,k ((i ,f) ,f))))))))
 	expr)
 (defun ibp (expr)
@@ -158,7 +158,7 @@
 										((cos (/ PI 2)) = 0)
 										((sin (/ PI 2)) = 1)
 										((cos (- ?x)) = (cos ?x))
-										((sin (- ?x)) = (sin ?x))
+										((sin (- ?x)) = (- (sin ?x)))
 										((expt 1 ?x) = 1)
 										((expt 0 ?x) = 0)
 										((exp 0) = 1)
@@ -195,6 +195,10 @@
 										;(((i ?x) (log ?x)) = (- (* ?x (log ?x)) ?x))
 										(((i ?x) (expt ?n ?x) (?if (not (contains '?x '?n)))) = (/ (expt ?n ?x) (log ?n)))
 									) "A list of rules for calculating indefinite integrals")
+(defparameter *limit-rules*	'( 	(((lim ?x ?c) ?y (?if (not (contains '?x '?y)))) = ?y)
+								(((lim ?x ?c) ?x) = ?c)
+								(((lim ?x ?c) ((?op is commp) ?a ?b*)) = (?op ((lim ?x ?c) ?a) ((lim ?x ?c) (?op ?b*))))
+							 ) "A list of rules for calculating limits")
 ;(setf *simplification-rules*
 ;	(sort *simplification-rules* (lambda (a b) (simpler? (caddr a) (caddr b)))))
 ;(setf *differentiation-rules*
@@ -226,11 +230,12 @@
 						(list 'expt (car temp) (caddr temp)))
 					(t temp)))
 		expr))
-(defun simplify (expr &key (to-infix t))
+(defun simplify (expr &key (to-infix t) (tracep nil))
 	"Simplifies an expression"
 	(let ((simp (transform (in->pre expr) 
-					(append *simplification-rules* *differentiation-rules* *integration-rules*) 
-					:rewrite (compose #'ibp #'u-sub #'evaluate #'absorb-args))))
+					(append *simplification-rules* *differentiation-rules* *integration-rules* *limit-rules*) 
+					:rewrite (compose #'ibp #'u-sub #'evaluate #'absorb-args)
+					:tracep tracep)))
 			(if to-infix (pre->in simp) simp)))
 (defparameter *isolation-rules*	'(	( (?g = ?h (?if (not (contains '?x '?g))) (?if (not (contains '?x '?h)))) -> (?g = ?h) )
 									( (?g = ?f (?if (not (contains '?x '?g)))) -> (?f = ?g))

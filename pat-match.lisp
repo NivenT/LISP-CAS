@@ -67,16 +67,23 @@
 			;	(let ((rest (pat-match (cdr pattern) (cdr input) bindings)))
 			;		(when rest (pat-match (car pattern) (car input) rest))))
 			))
-(defun transform-helper (expr rules bindings)
+(defun transform-helper (expr rules bindings tracep)
 	"Transforms an expression, treating it as one unit"
 	(loop for rule in rules do
 		(let ((bindings (pat-match (car rule) expr bindings)))
-			(when bindings (return-from transform-helper (sublis bindings (caddr rule))))))
+			(when bindings 
+				(when tracep (princ (concatenate 'string
+							"Used rule " (write-to-string rule) " on input " (write-to-string expr))))
+				(return-from transform-helper (sublis bindings (caddr rule))))))
 	expr)
-(defun transform (expr rules &key (rewrite #'identity) (bindings nil))
+(defun transform (expr rules &key (rewrite #'identity) (bindings nil) (tracep nil))
 	"Transforms an expression given a set of rules"
 	(if (consp expr)
-		(let ((new (funcall rewrite (transform-helper (loop for term in expr collect 
-				(transform term rules :rewrite rewrite :bindings bindings)) rules bindings))))
-			(if (equalp expr new) new (transform new rules :rewrite rewrite :bindings bindings)))
-		(transform-helper expr rules bindings)))
+		(let ((new (funcall rewrite 
+				(transform-helper (loop for term in expr collect 
+					(transform term rules :rewrite rewrite :bindings bindings :tracep tracep))
+					rules bindings tracep))))
+			(when (and tracep (not (equalp expr new))) (princ (concatenate 'string
+				"Rewrote input " (write-to-string expr) " to " (write-to-string new))))
+			(if (equalp expr new) new (transform new rules :rewrite rewrite :bindings bindings :tracep tracep)))
+		(transform-helper expr rules bindings tracep)))
