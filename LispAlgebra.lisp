@@ -36,14 +36,30 @@
 	"Returns true iff item appears anywhere in tree"
 	(cond	((equalp item tree) t)
 			((consp tree) (or (contains item (car tree)) (contains item (cdr tree))))))
+(defun gather (lst pred)
+	(let ((y nil) (n nil))
+		(loop for item in lst do
+			(if (funcall pred item)
+				(setf y (append y `(,item)))
+				(setf n (append n `(,item)))
+			))
+		(list y n)))
 (defun evaluate (expr &key (bindings nil) (eval-all nil))
 	"Evaluates all numeric computations in an expression"
 	(evaluate-helper (sublis bindings expr) eval-all))
 (defun evaluate-helper (expr eval-all)
 	(if (and (consp expr) (not (pat-match '(?or (?x) (expt ?x) (/ ?x)) expr)))
 		(let ((operands (mapcar #'(lambda (f) (evaluate-helper f eval-all)) (cdr expr))) (op (car expr)))
-			(if (and (or (eval-opp op) (and eval-all (lisp-opp op))) (every #'numberp operands)) 
-				(apply op operands) (cons op operands)))
+			(cond
+				((and (or (eval-opp op) (and eval-all (lisp-opp op))) (every #'numberp operands))
+					(apply op operands))
+				((commp op)
+					(let ((temp (gather operands #'numberp)))
+						(list* op (apply op (car temp)) (cadr temp))))
+				((member op '(- /))
+					(let ((temp (gather (cdr operands) #'numberp)))
+						(list* op (apply (inv-op op) (car temp)) (cadr temp))))
+				(t (cons op operands))))
 		expr))
 ;(defun compose (f g)
 ;	(lambda (&rest args) (funcall f (apply g args))))
@@ -148,6 +164,7 @@
 										((expt (- ?x) (?and (?n is integerp) (?n is evenp))) = (expt ?x ?n))
 										((- (* ?a* ?x ?b*) ?c* (* ?d* ?x ?e*) ?f*) = (- (* ?x (- (* ?a* ?b*) (* ?d* ?e*))) ?c* ?f*))
 										((- (+ ?x ?b*) ?c* (* ?d* ?x ?e*) ?f*) = (- (+ (* ?x (- 1 (* ?d* ?e*))) ?b*) ?c* ?f*))
+										((- (* ?a* ?x ?b*) ?c* (+ ?d* ?x ?e*) ?f*) = (- (* (- (+ ?a* ?b*) 1) ?x) ?c* ?f* ?d* ?e*))
 										((- (+ ?a* ?x ?b*) ?c* (* ?d* ?x ?e*) ?f*) = (- (+ (* ?x (- 1 (* ?d* ?e*))) ?a* ?b*) ?c* ?f*))
 										((cos 0) = 1)
 										((sin 0) = 0)
@@ -251,11 +268,12 @@
 								 	( ((/ ?f ?g*) = ?h) -> (?f = (* ?g* ?h)) )
 								 	( (?f = ?g (?if (contains '?x '?f)) (?if (contains '?x '?g))) -> ((- ?f ?g) = 0) )
 								 ) "A list of rules for isolating a variable")
-(defun solve (expr &key (var 'x) (to-infix t))
+(defun solve (expr &key (var 'x) (to-infix t) (tracep nil))
 	"Solves simple equations"
 	(let ((solved (transform (in->pre expr) *isolation-rules* 
 		:rewrite #'(lambda (x) (simplify x :to-infix nil)) 
-		:bindings `((?x . ,var)))))
+		:bindings `((?x . ,var))
+		:tracep tracep)))
 		(when (pat-match '(((?op is unaryp) ?f) = ?k (?if (not (contains '?x '?k))) (?if (inv-op '?op))) solved `((?x . ,var)))
 			(setf solved (solve (list (cadar solved) '= (list (inv-op (caar solved)) (caddr solved))) :var var :to-infix to-infix)))
 		(if to-infix (pre->in solved) solved)))
@@ -266,7 +284,8 @@
 				(if (eq (car sol) var)
 					(return-from solve-system-helper 
 						(solve-system-helper 	(remove var vars) 
-												(subst (caddr sol) 
+												(subst 
+													(caddr sol) 
 													(car sol) 
 													(remove eqn equations)) 
 												(append known `(,sol))))))))
@@ -293,3 +312,21 @@
 			(terms nil (append terms (list (simplify `((,(evaluate f :bindings `((,var . ,c))) * ((,var - ,c) ^ ,i)) / ,(fac i))))))
 			(i 0 (1+ i)))
 		((or (= i n) (equalp f 0)) (simplify (list* '+ terms) :to-infix to-infix))))
+(defun expr->string (e)
+	(cond
+		((pat-match '((?op is commp) ?x) e)
+			(expr->string (cadr e)))
+		((pat-match '(+ ?x ?y*) e) (format nil "~a + ~a" 
+			(expr->string (cadr e)) (expr->string (list* (car e) (cddr e)))))
+		((and (pat-match '(* ?x ?y*) e) (every #'numberp (cdr e))) (format nil "~a * ~a"
+			(expr->string (cadr e)) (expr->string (list* (car e) (cddr e))))) 
+		((pat-match '(* ?x ?y*) e) 
+			(let ((temp (gather (cdr e) #'numberp))) (if (= (length (car temp)) 1)
+				(format nil "~a~{~a~}" (caar temp) (cadr temp))
+				(format nil "(~a)~{~a~}" (expr->string (list* '* (car temp))) (cadr temp)))))
+		((pat-match '((?or - /) ?x ?y*) e) (if (= (length (cddr e)) 1)
+			(format nil "~a ~a ~a" (cadr e) (car e) (caddr e))
+			(format nil "~a ~a (~a)" 
+				(cadr e) (car e) (expr->string (list* (inv-op (car e)) (cddr e))))))
+		(t (write-to-string e))
+	))
